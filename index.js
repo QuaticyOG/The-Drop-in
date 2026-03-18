@@ -143,22 +143,26 @@ require('dotenv').config();
       name: `${member.displayName}'s Room`,
       type: ChannelType.GuildVoice,
       parent: PRIVATE_VC_CATEGORY_ID || null,
-      permissionOverwrites: [
-        {
-          id: guild.id,
-          deny: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.Connect,
-          ],
-        },
-        {
-          id: member.id,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.Connect,
-          ],
-        },
-      ],
+permissionOverwrites: [
+  {
+    id: guild.id,
+    allow: [
+      PermissionsBitField.Flags.ViewChannel, // 👀 everyone can see
+    ],
+    deny: [
+      PermissionsBitField.Flags.Connect, // 🔒 no joining by default
+    ],
+  },
+  {
+    id: member.id,
+    allow: [
+      PermissionsBitField.Flags.ViewChannel,
+      PermissionsBitField.Flags.Connect,
+      PermissionsBitField.Flags.Speak,
+      PermissionsBitField.Flags.Stream,
+    ],
+  },
+],
     });
 
     await saveVC(channel.id, member.id, guild.id);
