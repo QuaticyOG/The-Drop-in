@@ -23,6 +23,8 @@ const AUTO_ROLE_ID = process.env.AUTO_ROLE_ID || '';
 const CREATE_VC_CHANNEL_ID = process.env.CREATE_VC_CHANNEL_ID || '';
 const PRIVATE_VC_CATEGORY_ID = process.env.PRIVATE_VC_CATEGORY_ID || '';
 const VC_CREATE_COOLDOWN_MS = Number(process.env.VC_CREATE_COOLDOWN_MS || 10000);
+const res = await pool.query('SELECT current_database()');
+console.log('DB NAME:', res.rows[0]);
 
 /*
 ========================================================
