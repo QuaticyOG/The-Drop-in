@@ -1,251 +1,150 @@
 require('dotenv').config();
 
-const {
-  Client,
-  GatewayIntentBits,
-  ChannelType,
-  PermissionsBitField,
-  Events,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-} = require('discord.js');
+(async () => {
+  const {
+    Client,
+    GatewayIntentBits,
+    ChannelType,
+    PermissionsBitField,
+    Events,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+  } = require('discord.js');
 
-const { Pool } = require('pg');
+  const { Pool } = require('pg');
 
-/*
-========================================================
-CONFIG
-========================================================
-*/
+  /*
+  ==============================
+  CONFIG
+  ==============================
+  */
+  const AUTO_ROLE_ID = process.env.AUTO_ROLE_ID;
+  const CREATE_VC_CHANNEL_ID = process.env.CREATE_VC_CHANNEL_ID;
+  const PRIVATE_VC_CATEGORY_ID = process.env.PRIVATE_VC_CATEGORY_ID || '';
+  const VC_CREATE_COOLDOWN = 10000;
 
-const AUTO_ROLE_ID = process.env.AUTO_ROLE_ID || '';
-const CREATE_VC_CHANNEL_ID = process.env.CREATE_VC_CHANNEL_ID || '';
-const PRIVATE_VC_CATEGORY_ID = process.env.PRIVATE_VC_CATEGORY_ID || '';
-const VC_CREATE_COOLDOWN_MS = Number(process.env.VC_CREATE_COOLDOWN_MS || 10000);
-const res = await pool.query('SELECT current_database()');
-console.log('DB NAME:', res.rows[0]);
+  /*
+  ==============================
+  CLIENT
+  ==============================
+  */
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildVoiceStates,
+    ],
+  });
 
-/*
-========================================================
-CLIENT SETUP
-========================================================
-*/
+  /*
+  ==============================
+  DATABASE
+  ==============================
+  */
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildVoiceStates,
-  ],
-});
-
-/*
-========================================================
-POSTGRES SETUP
-========================================================
-Railway provides DATABASE_URL. This works well with pg.
-========================================================
-*/
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
-});
-
-/*
-========================================================
-IN-MEMORY TEMP DATA
-========================================================
-These are temporary runtime helpers only.
-No database needed for them.
-========================================================
-*/
-
-// Prevent VC creation spam
-const createCooldowns = new Map();
-
-// Track pending join requests in memory
-// key = requestId, value = { guildId, ownerId, requesterId, channelId, createdAt }
-const pendingRequests = new Map();
-
-/*
-========================================================
-DATABASE HELPERS
-========================================================
-*/
-
-async function savePrivateVC(channelId, ownerId, guildId) {
-  await pool.query(
-    `
-    INSERT INTO private_vcs (channel_id, owner_id, guild_id)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (channel_id) DO NOTHING
-    `,
-    [channelId, ownerId, guildId]
-  );
-}
-
-async function deletePrivateVC(channelId) {
-  await pool.query(
-    `DELETE FROM private_vcs WHERE channel_id = $1`,
-    [channelId]
-  );
-}
-
-async function getPrivateVCByChannelId(channelId) {
-  const result = await pool.query(
-    `SELECT * FROM private_vcs WHERE channel_id = $1 LIMIT 1`,
-    [channelId]
-  );
-  return result.rows[0] || null;
-}
-
-async function getPrivateVCByOwnerId(ownerId, guildId) {
-  const result = await pool.query(
-    `
-    SELECT * FROM private_vcs
-    WHERE owner_id = $1 AND guild_id = $2
-    LIMIT 1
-    `,
-    [ownerId, guildId]
-  );
-  return result.rows[0] || null;
-}
-
-async function getAllPrivateVCs() {
-  const result = await pool.query(`SELECT * FROM private_vcs`);
-  return result.rows;
-}
-
-/*
-========================================================
-UTILITY HELPERS
-========================================================
-*/
-
-function botMember(guild) {
-  return guild.members.me;
-}
-
-function hasPermission(guild, permission) {
-  const me = botMember(guild);
-  if (!me) return false;
-  return me.permissions.has(permission);
-}
-
-function buildRoomName(member) {
-  const name = member.displayName || member.user.username;
-  return `${name}'s Room`;
-}
-
-function makeRequestId() {
-  return `${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
-}
-
-async function safeReply(interaction, options) {
-  if (interaction.replied || interaction.deferred) {
-    return interaction.followUp(options);
-  }
-  return interaction.reply(options);
-}
-
-/*
-========================================================
-AUTO ROLE
-========================================================
-*/
-
-async function assignAutoRole(member) {
-  if (!AUTO_ROLE_ID) return;
-
-  const role = member.guild.roles.cache.get(AUTO_ROLE_ID);
-  if (!role) {
-    console.warn(`[AutoRole] Role not found: ${AUTO_ROLE_ID}`);
-    return;
+  async function initDatabase() {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS private_vcs (
+        channel_id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        guild_id TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('✅ Database ready');
   }
 
-  const me = botMember(member.guild);
-  if (!me) return;
+  /*
+  ==============================
+  MEMORY
+  ==============================
+  */
+  const cooldowns = new Map();
+  const requests = new Map();
 
-  if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
-    console.warn('[AutoRole] Missing ManageRoles permission.');
-    return;
+  /*
+  ==============================
+  DB HELPERS
+  ==============================
+  */
+  const saveVC = (cid, oid, gid) =>
+    pool.query(
+      `INSERT INTO private_vcs (channel_id, owner_id, guild_id)
+       VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+      [cid, oid, gid]
+    );
+
+  const deleteVC = (cid) =>
+    pool.query(`DELETE FROM private_vcs WHERE channel_id=$1`, [cid]);
+
+  const getVCByOwner = async (oid, gid) => {
+    const r = await pool.query(
+      `SELECT * FROM private_vcs WHERE owner_id=$1 AND guild_id=$2 LIMIT 1`,
+      [oid, gid]
+    );
+    return r.rows[0];
+  };
+
+  const getVCByChannel = async (cid) => {
+    const r = await pool.query(
+      `SELECT * FROM private_vcs WHERE channel_id=$1`,
+      [cid]
+    );
+    return r.rows[0];
+  };
+
+  const getAllVCs = async () => {
+    const r = await pool.query(`SELECT * FROM private_vcs`);
+    return r.rows;
+  };
+
+  /*
+  ==============================
+  AUTO ROLE
+  ==============================
+  */
+  async function giveRole(member) {
+    if (!AUTO_ROLE_ID) return;
+    const role = member.guild.roles.cache.get(AUTO_ROLE_ID);
+    if (!role) return;
+
+    const me = member.guild.members.me;
+    if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) return;
+    if (role.position >= me.roles.highest.position) return;
+
+    try {
+      await member.roles.add(role);
+    } catch {}
   }
 
-  if (role.position >= me.roles.highest.position) {
-    console.warn('[AutoRole] Bot role must be above the auto role.');
-    return;
-  }
+  /*
+  ==============================
+  CREATE VC
+  ==============================
+  */
+  async function createVC(member) {
+    const guild = member.guild;
+    const now = Date.now();
 
-  try {
-    await member.roles.add(role);
-    console.log(`[AutoRole] Assigned ${role.name} to ${member.user.tag}`);
-  } catch (error) {
-    console.error('[AutoRole] Failed to assign role:', error);
-  }
-}
+    if (cooldowns.get(member.id) > now) return;
 
-/*
-========================================================
-PRIVATE VC HELPERS
-========================================================
-*/
-
-async function createPrivateVoiceChannel(member) {
-  const guild = member.guild;
-  const me = botMember(guild);
-
-  if (!me) return { ok: false, reason: 'Bot member not cached yet.' };
-
-  // Basic permission checks
-  if (!me.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
-    return { ok: false, reason: 'I need the Manage Channels permission.' };
-  }
-
-  if (!me.permissions.has(PermissionsBitField.Flags.MoveMembers)) {
-    return { ok: false, reason: 'I need the Move Members permission.' };
-  }
-
-  // Cooldown
-  const lastCreate = createCooldowns.get(member.id) || 0;
-  const now = Date.now();
-  if (now - lastCreate < VC_CREATE_COOLDOWN_MS) {
-    return { ok: false, reason: 'Please wait a moment before creating another VC.' };
-  }
-
-  // If the user already owns one, just move them there if possible
-  const existingRecord = await getPrivateVCByOwnerId(member.id, guild.id);
-  if (existingRecord) {
-    const existingChannel = guild.channels.cache.get(existingRecord.channel_id);
-
-    if (existingChannel && existingChannel.type === ChannelType.GuildVoice) {
-      try {
-        await member.voice.setChannel(existingChannel);
-        return { ok: true, reused: true, channel: existingChannel };
-      } catch (error) {
-        console.error('[VC] Failed to move member into existing VC:', error);
-        return { ok: false, reason: 'I created/found your VC, but could not move you into it.' };
-      }
+    const existing = await getVCByOwner(member.id, guild.id);
+    if (existing) {
+      const ch = guild.channels.cache.get(existing.channel_id);
+      if (ch) return member.voice.setChannel(ch);
     }
 
-    // Stale DB row cleanup
-    await deletePrivateVC(existingRecord.channel_id);
-  }
-
-  const createVCChannel = guild.channels.cache.get(CREATE_VC_CHANNEL_ID);
-  if (!createVCChannel || createVCChannel.type !== ChannelType.GuildVoice) {
-    return { ok: false, reason: 'The Create VC channel is missing or not a voice channel.' };
-  }
-
-  try {
-    const newChannel = await guild.channels.create({
-      name: buildRoomName(member),
+    const channel = await guild.channels.create({
+      name: `${member.displayName}'s Room`,
       type: ChannelType.GuildVoice,
-      parent: PRIVATE_VC_CATEGORY_ID || createVCChannel.parentId || null,
+      parent: PRIVATE_VC_CATEGORY_ID || null,
       permissionOverwrites: [
         {
-          // Hide from everyone by default
           id: guild.id,
           deny: [
             PermissionsBitField.Flags.ViewChannel,
@@ -253,382 +152,162 @@ async function createPrivateVoiceChannel(member) {
           ],
         },
         {
-          // Owner permissions
           id: member.id,
           allow: [
             PermissionsBitField.Flags.ViewChannel,
             PermissionsBitField.Flags.Connect,
-            PermissionsBitField.Flags.Speak,
-            PermissionsBitField.Flags.Stream,
-            PermissionsBitField.Flags.UseVAD,
-          ],
-        },
-        {
-          // Bot permissions
-          id: me.id,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.Connect,
-            PermissionsBitField.Flags.MoveMembers,
-            PermissionsBitField.Flags.ManageChannels,
           ],
         },
       ],
     });
 
-    await savePrivateVC(newChannel.id, member.id, guild.id);
-    createCooldowns.set(member.id, Date.now());
+    await saveVC(channel.id, member.id, guild.id);
+    cooldowns.set(member.id, now + VC_CREATE_COOLDOWN);
 
-    try {
-      await member.voice.setChannel(newChannel);
-    } catch (error) {
-      console.error('[VC] Created VC but failed to move member:', error);
-    }
-
-    console.log(`[VC] Created private VC ${newChannel.name} for ${member.user.tag}`);
-    return { ok: true, channel: newChannel };
-  } catch (error) {
-    console.error('[VC] Failed to create private VC:', error);
-    return { ok: false, reason: 'Failed to create the private voice channel.' };
+    await member.voice.setChannel(channel);
   }
-}
 
-async function deletePrivateVoiceChannelIfEmpty(channel) {
-  if (!channel || channel.type !== ChannelType.GuildVoice) return;
+  /*
+  ==============================
+  DELETE VC
+  ==============================
+  */
+  async function deleteIfEmpty(channel) {
+    const db = await getVCByChannel(channel.id);
+    if (!db) return;
+    if (channel.members.size > 0) return;
 
-  const dbRecord = await getPrivateVCByChannelId(channel.id);
-  if (!dbRecord) return;
-
-  if (channel.members.size > 0) return;
-
-  try {
-    await deletePrivateVC(channel.id);
-    await channel.delete('Private VC became empty');
-    console.log(`[VC] Deleted empty private VC: ${channel.name}`);
-  } catch (error) {
-    console.error('[VC] Failed to delete empty private VC:', error);
+    await deleteVC(channel.id);
+    await channel.delete();
   }
-}
 
-async function cleanupStalePrivateVCs() {
-  const records = await getAllPrivateVCs();
+  /*
+  ==============================
+  CLEANUP
+  ==============================
+  */
+  async function cleanup() {
+    const list = await getAllVCs();
 
-  for (const record of records) {
-    const guild = client.guilds.cache.get(record.guild_id);
-    if (!guild) continue;
+    for (const vc of list) {
+      const guild = client.guilds.cache.get(vc.guild_id);
+      if (!guild) continue;
 
-    const channel = guild.channels.cache.get(record.channel_id);
+      const ch = guild.channels.cache.get(vc.channel_id);
+      if (!ch) return deleteVC(vc.channel_id);
 
-    // Delete stale DB rows if the channel no longer exists
-    if (!channel) {
-      await deletePrivateVC(record.channel_id);
-      console.log(`[Cleanup] Removed stale DB row for missing channel ${record.channel_id}`);
-      continue;
-    }
-
-    // If it exists and is empty, delete it
-    if (channel.type === ChannelType.GuildVoice && channel.members.size === 0) {
-      await deletePrivateVoiceChannelIfEmpty(channel);
+      if (ch.members.size === 0) {
+        await deleteVC(vc.channel_id);
+        await ch.delete();
+      }
     }
   }
-}
 
-/*
-========================================================
-SLASH COMMAND: /requestjoin
-========================================================
-This lets someone request access to a private VC owner.
-The owner receives buttons: Accept / Deny.
-========================================================
-*/
+  /*
+  ==============================
+  EVENTS
+  ==============================
+  */
 
-async function handleRequestJoinCommand(interaction) {
-  const requester = interaction.member;
-  const ownerUser = interaction.options.getUser('user', true);
+  client.once(Events.ClientReady, async () => {
+    console.log(`Logged in as ${client.user.tag}`);
 
-  if (!interaction.guild) {
-    return safeReply(interaction, {
-      content: 'This command can only be used inside a server.',
-      ephemeral: true,
-    });
-  }
-
-  if (ownerUser.bot) {
-    return safeReply(interaction, {
-      content: 'You cannot request to join a bot’s VC.',
-      ephemeral: true,
-    });
-  }
-
-  if (ownerUser.id === requester.id) {
-    return safeReply(interaction, {
-      content: 'You already own your own VC request target.',
-      ephemeral: true,
-    });
-  }
-
-  const ownerMember = await interaction.guild.members.fetch(ownerUser.id).catch(() => null);
-  if (!ownerMember) {
-    return safeReply(interaction, {
-      content: 'That user is not in this server.',
-      ephemeral: true,
-    });
-  }
-
-  const record = await getPrivateVCByOwnerId(ownerUser.id, interaction.guild.id);
-  if (!record) {
-    return safeReply(interaction, {
-      content: 'That user does not currently own a private voice channel.',
-      ephemeral: true,
-    });
-  }
-
-  const channel = interaction.guild.channels.cache.get(record.channel_id);
-  if (!channel || channel.type !== ChannelType.GuildVoice) {
-    await deletePrivateVC(record.channel_id);
-    return safeReply(interaction, {
-      content: 'That private voice channel no longer exists.',
-      ephemeral: true,
-    });
-  }
-
-  const requestId = makeRequestId();
-
-  pendingRequests.set(requestId, {
-    guildId: interaction.guild.id,
-    ownerId: ownerUser.id,
-    requesterId: requester.id,
-    channelId: channel.id,
-    createdAt: Date.now(),
-  });
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`vc_accept_${requestId}`)
-      .setLabel('Accept')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`vc_deny_${requestId}`)
-      .setLabel('Deny')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  await safeReply(interaction, {
-    content: `Your request was sent to **${ownerUser.tag}**.`,
-    ephemeral: true,
-  });
-
-  try {
-    await ownerUser.send({
-      content: `**${requester.user.tag}** wants to join your private VC in **${interaction.guild.name}**.`,
-      components: [row],
-    });
-  } catch (error) {
-    console.error('[RequestJoin] Could not DM VC owner:', error);
-    pendingRequests.delete(requestId);
-
-    await interaction.followUp({
-      content: 'I could not send the request because that user has DMs disabled.',
-      ephemeral: true,
-    });
-  }
-}
-
-async function handleRequestButton(interaction) {
-  if (!interaction.customId.startsWith('vc_accept_') && !interaction.customId.startsWith('vc_deny_')) {
-    return;
-  }
-
-  const isAccept = interaction.customId.startsWith('vc_accept_');
-  const requestId = interaction.customId.replace('vc_accept_', '').replace('vc_deny_', '');
-
-  const data = pendingRequests.get(requestId);
-  if (!data) {
-    return safeReply(interaction, {
-      content: 'This request has expired or was already handled.',
-      ephemeral: true,
-    });
-  }
-
-  if (interaction.user.id !== data.ownerId) {
-    return safeReply(interaction, {
-      content: 'You are not allowed to respond to this request.',
-      ephemeral: true,
-    });
-  }
-
-  const guild = client.guilds.cache.get(data.guildId);
-  if (!guild) {
-    pendingRequests.delete(requestId);
-    return safeReply(interaction, {
-      content: 'The server could not be found.',
-      ephemeral: true,
-    });
-  }
-
-  const channel = guild.channels.cache.get(data.channelId);
-  const requester = await guild.members.fetch(data.requesterId).catch(() => null);
-
-  if (!channel || channel.type !== ChannelType.GuildVoice) {
-    pendingRequests.delete(requestId);
-    await deletePrivateVC(data.channelId).catch(() => {});
-    return safeReply(interaction, {
-      content: 'That private VC no longer exists.',
-      ephemeral: true,
-    });
-  }
-
-  if (!requester) {
-    pendingRequests.delete(requestId);
-    return safeReply(interaction, {
-      content: 'The requesting user could not be found.',
-      ephemeral: true,
-    });
-  }
-
-  if (!isAccept) {
-    pendingRequests.delete(requestId);
-
-    await interaction.update({
-      content: `You denied **${requester.user.tag}**’s request.`,
-      components: [],
-    });
-
-    try {
-      await requester.send(`Your request to join **${interaction.user.tag}**’s private VC was denied.`);
-    } catch (_) {}
-
-    return;
-  }
-
-  try {
-    await channel.permissionOverwrites.edit(requester.id, {
-      ViewChannel: true,
-      Connect: true,
-      Speak: true,
-      Stream: true,
-      UseVAD: true,
-    });
-
-    pendingRequests.delete(requestId);
-
-    await interaction.update({
-      content: `You accepted **${requester.user.tag}**’s request. They can now join your VC.`,
-      components: [],
-    });
-
-    try {
-      await requester.send(`Your request to join **${interaction.user.tag}**’s private VC was accepted.`);
-    } catch (_) {}
-  } catch (error) {
-    console.error('[RequestJoin] Failed to grant access:', error);
-
-    pendingRequests.delete(requestId);
-
-    await interaction.update({
-      content: `Something went wrong while granting access to **${requester.user.tag}**.`,
-      components: [],
-    });
-  }
-}
-
-/*
-========================================================
-EVENTS
-========================================================
-*/
-
-client.once(Events.ClientReady, async readyClient => {
-  console.log(`Logged in as ${readyClient.user.tag}`);
-
-  try {
     await pool.query('SELECT 1');
     console.log('Connected to PostgreSQL successfully.');
-  } catch (error) {
-    console.error('PostgreSQL connection failed:', error);
-  }
 
-  try {
-    await cleanupStalePrivateVCs();
-  } catch (error) {
-    console.error('Startup cleanup failed:', error);
-  }
-});
+    await initDatabase();
+    await cleanup();
+  });
 
-client.on(Events.GuildMemberAdd, async member => {
-  await assignAutoRole(member);
-});
+  client.on(Events.GuildMemberAdd, giveRole);
 
-client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-  try {
-    const member = newState.member || oldState.member;
+  client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+    const member = newState.member;
     if (!member || member.user.bot) return;
 
-    // User joined the Create VC channel
-    if (
-      newState.channelId &&
-      newState.channelId === CREATE_VC_CHANNEL_ID &&
-      oldState.channelId !== CREATE_VC_CHANNEL_ID
-    ) {
-      const result = await createPrivateVoiceChannel(member);
-
-      if (!result.ok) {
-        try {
-          await member.send(`I could not create your private VC: ${result.reason}`);
-        } catch (_) {}
-      }
+    if (newState.channelId === CREATE_VC_CHANNEL_ID) {
+      await createVC(member);
     }
 
-    // If someone leaves a private VC, delete it if empty
     if (oldState.channelId) {
-      const oldChannel = oldState.guild.channels.cache.get(oldState.channelId);
-      if (oldChannel) {
-        await deletePrivateVoiceChannelIfEmpty(oldChannel);
+      const ch = oldState.guild.channels.cache.get(oldState.channelId);
+      if (ch) await deleteIfEmpty(ch);
+    }
+  });
+
+  client.on(Events.InteractionCreate, async (i) => {
+    if (!i.isChatInputCommand()) return;
+
+    if (i.commandName === 'requestjoin') {
+      const user = i.options.getUser('user');
+      const vc = await getVCByOwner(user.id, i.guild.id);
+
+      if (!vc) {
+        return i.reply({ content: 'No VC found.', ephemeral: true });
       }
-    }
-  } catch (error) {
-    console.error('[VoiceStateUpdate] Error:', error);
-  }
-});
 
-client.on(Events.InteractionCreate, async interaction => {
-  try {
-    if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === 'requestjoin') {
-        await handleRequestJoinCommand(interaction);
-      }
-      return;
-    }
+      const requestId = Date.now().toString();
+      requests.set(requestId, {
+        owner: user.id,
+        requester: i.user.id,
+        channel: vc.channel_id,
+      });
 
-    if (interaction.isButton()) {
-      await handleRequestButton(interaction);
-    }
-  } catch (error) {
-    console.error('[InteractionCreate] Error:', error);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`accept_${requestId}`)
+          .setLabel('Accept')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`deny_${requestId}`)
+          .setLabel('Deny')
+          .setStyle(ButtonStyle.Danger)
+      );
 
-    if (interaction.isRepliable()) {
+      await i.reply({ content: 'Request sent.', ephemeral: true });
+
       try {
-        await safeReply(interaction, {
-          content: 'An unexpected error occurred.',
-          ephemeral: true,
+        await user.send({
+          content: `${i.user.tag} wants to join your VC`,
+          components: [row],
         });
-      } catch (_) {}
+      } catch {
+        i.followUp({ content: 'User has DMs off.', ephemeral: true });
+      }
     }
-  }
-});
 
-/*
-========================================================
-START
-========================================================
-*/
+    if (i.isButton()) {
+      const [action, id] = i.customId.split('_');
+      const data = requests.get(id);
+      if (!data) return;
 
-if (!process.env.TOKEN) {
-  throw new Error('Missing TOKEN in .env');
-}
+      if (i.user.id !== data.owner) {
+        return i.reply({ content: 'Not your request.', ephemeral: true });
+      }
 
-if (!process.env.DATABASE_URL) {
-  throw new Error('Missing DATABASE_URL in .env');
-}
+      const guild = client.guilds.cache.get(i.guildId);
+      const ch = guild.channels.cache.get(data.channel);
 
-client.login(process.env.TOKEN);
+      if (action === 'accept') {
+        await ch.permissionOverwrites.edit(data.requester, {
+          ViewChannel: true,
+          Connect: true,
+        });
+
+        i.update({ content: 'Accepted', components: [] });
+      } else {
+        i.update({ content: 'Denied', components: [] });
+      }
+
+      requests.delete(id);
+    }
+  });
+
+  /*
+  ==============================
+  START
+  ==============================
+  */
+
+  await client.login(process.env.TOKEN);
+})();
