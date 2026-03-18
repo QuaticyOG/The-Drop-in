@@ -101,11 +101,6 @@ require('dotenv').config();
     return r.rows[0];
   };
 
-  const getAllVCs = async () => {
-    const r = await pool.query(`SELECT * FROM private_vcs`);
-    return r.rows;
-  };
-
   /*
   ==============================
   AUTO ROLE
@@ -113,6 +108,7 @@ require('dotenv').config();
   */
   async function giveRole(member) {
     if (!AUTO_ROLE_ID) return;
+
     const role = member.guild.roles.cache.get(AUTO_ROLE_ID);
     if (!role) return;
 
@@ -186,103 +182,48 @@ require('dotenv').config();
 
   /*
   ==============================
-  CLEANUP
-  ==============================
-  */
-  async function cleanup() {
-    const list = await getAllVCs();
-
-    for (const vc of list) {
-      const guild = client.guilds.cache.get(vc.guild_id);
-      if (!guild) continue;
-
-      const ch = guild.channels.cache.get(vc.channel_id);
-      if (!ch) return deleteVC(vc.channel_id);
-
-      if (ch.members.size === 0) {
-        await deleteVC(vc.channel_id);
-        await ch.delete();
-      }
-    }
-  }
-
-  /*
-  ==============================
   EVENTS
   ==============================
   */
 
-client.once(Events.ClientReady, async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  client.once(Events.ClientReady, async () => {
+    console.log(`Logged in as ${client.user.tag}`);
 
-  try {
-    await pool.query('SELECT 1');
-    console.log('Connected to PostgreSQL successfully.');
+    try {
+      await pool.query('SELECT 1');
+      console.log('Connected to PostgreSQL successfully.');
 
-    await initDatabase();
-    console.log('DB init done');
+      await initDatabase();
 
-    // TEMP: skip cleanup for now
-    // await cleanup();
+      console.log('Deploying slash commands...');
 
-    console.log('Starting slash command deploy...');
+      const commands = [
+        new SlashCommandBuilder()
+          .setName('requestjoin')
+          .setDescription('Request to join a private VC')
+          .addUserOption(option =>
+            option
+              .setName('user')
+              .setDescription('VC owner')
+              .setRequired(true)
+          ),
+      ].map(cmd => cmd.toJSON());
 
-    console.log('CLIENT_ID:', process.env.CLIENT_ID);
-    console.log('GUILD_ID:', process.env.GUILD_ID);
+      const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
-    const commands = [
-      new SlashCommandBuilder()
-        .setName('requestjoin')
-        .setDescription('Request to join a private VC')
-        .addUserOption(option =>
-          option.setName('user').setDescription('VC owner').setRequired(true)
+      await rest.put(
+        Routes.applicationGuildCommands(
+          process.env.CLIENT_ID,
+          process.env.GUILD_ID
         ),
-    ].map(cmd => cmd.toJSON());
+        { body: commands }
+      );
 
-    console.log('Commands built:', commands);
+      console.log('✅ Slash commands deployed');
 
-    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-
-    await rest.put(
-      Routes.applicationGuildCommands(
-        process.env.CLIENT_ID,
-        process.env.GUILD_ID
-      ),
-      { body: commands }
-    );
-
-    console.log('✅ Slash commands deployed');
-
-  } catch (err) {
-    console.error('❌ STARTUP ERROR:', err);
-  }
-});
-
-    /*
-    ==============================
-    SLASH COMMAND DEPLOY
-    ==============================
-    */
-    const commands = [
-      new SlashCommandBuilder()
-        .setName('requestjoin')
-        .setDescription('Request to join a private VC')
-        .addUserOption(option =>
-          option.setName('user').setDescription('VC owner').setRequired(true)
-        ),
-    ].map(cmd => cmd.toJSON());
-
-    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-
-    await rest.put(
-      Routes.applicationGuildCommands(
-        process.env.CLIENT_ID,
-        process.env.GUILD_ID
-      ),
-      { body: commands }
-    );
-
-    console.log('✅ Slash commands deployed');
+    } catch (err) {
+      console.error('❌ STARTUP ERROR:', err);
+    }
   });
 
   client.on(Events.GuildMemberAdd, giveRole);
