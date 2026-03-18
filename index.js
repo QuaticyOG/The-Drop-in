@@ -212,14 +212,51 @@ require('dotenv').config();
   ==============================
   */
 
-  client.once(Events.ClientReady, async () => {
-    console.log(`Logged in as ${client.user.tag}`);
+client.once(Events.ClientReady, async () => {
+  console.log(`Logged in as ${client.user.tag}`);
 
+  try {
     await pool.query('SELECT 1');
     console.log('Connected to PostgreSQL successfully.');
 
     await initDatabase();
-    await cleanup();
+    console.log('DB init done');
+
+    // TEMP: skip cleanup for now
+    // await cleanup();
+
+    console.log('Starting slash command deploy...');
+
+    console.log('CLIENT_ID:', process.env.CLIENT_ID);
+    console.log('GUILD_ID:', process.env.GUILD_ID);
+
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('requestjoin')
+        .setDescription('Request to join a private VC')
+        .addUserOption(option =>
+          option.setName('user').setDescription('VC owner').setRequired(true)
+        ),
+    ].map(cmd => cmd.toJSON());
+
+    console.log('Commands built:', commands);
+
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+    await rest.put(
+      Routes.applicationGuildCommands(
+        process.env.CLIENT_ID,
+        process.env.GUILD_ID
+      ),
+      { body: commands }
+    );
+
+    console.log('✅ Slash commands deployed');
+
+  } catch (err) {
+    console.error('❌ STARTUP ERROR:', err);
+  }
+});
 
     /*
     ==============================
