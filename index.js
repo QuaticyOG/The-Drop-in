@@ -25,6 +25,7 @@ require('dotenv').config();
   const AUTO_ROLE_ID = process.env.AUTO_ROLE_ID;
   const CREATE_VC_CHANNEL_ID = process.env.CREATE_VC_CHANNEL_ID;
   const PRIVATE_VC_CATEGORY_ID = process.env.PRIVATE_VC_CATEGORY_ID || '';
+  const REQUEST_CHANNEL_ID = process.env.REQUEST_CHANNEL_ID;
   const VC_CREATE_COOLDOWN = 10000;
 
   /*
@@ -242,6 +243,12 @@ require('dotenv').config();
     }
   });
 
+  /*
+  ==============================
+  INTERACTIONS
+  ==============================
+  */
+
   client.on(Events.InteractionCreate, async (i) => {
     if (i.isChatInputCommand()) {
       if (i.commandName === 'requestjoin') {
@@ -253,10 +260,12 @@ require('dotenv').config();
         }
 
         const id = Date.now().toString();
+
         requests.set(id, {
           owner: user.id,
           requester: i.user.id,
           channel: vc.channel_id,
+          guildId: i.guild.id, // 🔥 FIXED
         });
 
         const row = new ActionRowBuilder().addComponents(
@@ -270,16 +279,24 @@ require('dotenv').config();
             .setStyle(ButtonStyle.Danger)
         );
 
-        await i.reply({ content: 'Request sent.', ephemeral: true });
+        const requestChannel = i.guild.channels.cache.get(REQUEST_CHANNEL_ID);
 
-        try {
-          await user.send({
-            content: `${i.user.tag} wants to join your VC`,
-            components: [row],
+        if (!requestChannel) {
+          return i.reply({
+            content: 'Request channel not found.',
+            ephemeral: true,
           });
-        } catch {
-          i.followUp({ content: 'User has DMs off.', ephemeral: true });
         }
+
+        await requestChannel.send({
+          content: `🔔 **VC Join Request**\nRequester: <@${i.user.id}>\nOwner: <@${user.id}>`,
+          components: [row],
+        });
+
+        await i.reply({
+          content: 'Request sent!',
+          ephemeral: true,
+        });
       }
     }
 
@@ -292,7 +309,9 @@ require('dotenv').config();
         return i.reply({ content: 'Not your request.', ephemeral: true });
       }
 
-      const guild = client.guilds.cache.get(i.guildId);
+      const guild = client.guilds.cache.get(data.guildId);
+      if (!guild) return;
+
       const ch = guild.channels.cache.get(data.channel);
 
       if (action === 'accept') {
@@ -301,11 +320,12 @@ require('dotenv').config();
           Connect: true,
         });
 
-        i.update({ content: 'Accepted', components: [] });
+        await i.update({ content: '✅ Accepted', components: [] });
       } else {
-        i.update({ content: 'Denied', components: [] });
+        await i.update({ content: '❌ Denied', components: [] });
       }
 
+      await i.message.delete().catch(() => {});
       requests.delete(id);
     }
   });
