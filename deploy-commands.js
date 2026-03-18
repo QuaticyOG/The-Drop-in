@@ -14,6 +14,8 @@ const commands = [
     ),
 ].map(command => command.toJSON());
 
+console.log(commands);
+
 async function deployCommands() {
   try {
     if (!process.env.TOKEN) throw new Error('Missing TOKEN in .env');
