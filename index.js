@@ -10,6 +10,9 @@ require('dotenv').config();
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    REST,
+    Routes,
+    SlashCommandBuilder,
   } = require('discord.js');
 
   const { Pool } = require('pg');
@@ -217,6 +220,32 @@ require('dotenv').config();
 
     await initDatabase();
     await cleanup();
+
+    /*
+    ==============================
+    SLASH COMMAND DEPLOY
+    ==============================
+    */
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('requestjoin')
+        .setDescription('Request to join a private VC')
+        .addUserOption(option =>
+          option.setName('user').setDescription('VC owner').setRequired(true)
+        ),
+    ].map(cmd => cmd.toJSON());
+
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+    await rest.put(
+      Routes.applicationGuildCommands(
+        process.env.CLIENT_ID,
+        process.env.GUILD_ID
+      ),
+      { body: commands }
+    );
+
+    console.log('✅ Slash commands deployed');
   });
 
   client.on(Events.GuildMemberAdd, giveRole);
@@ -236,43 +265,43 @@ require('dotenv').config();
   });
 
   client.on(Events.InteractionCreate, async (i) => {
-    if (!i.isChatInputCommand()) return;
+    if (i.isChatInputCommand()) {
+      if (i.commandName === 'requestjoin') {
+        const user = i.options.getUser('user');
+        const vc = await getVCByOwner(user.id, i.guild.id);
 
-    if (i.commandName === 'requestjoin') {
-      const user = i.options.getUser('user');
-      const vc = await getVCByOwner(user.id, i.guild.id);
+        if (!vc) {
+          return i.reply({ content: 'No VC found.', ephemeral: true });
+        }
 
-      if (!vc) {
-        return i.reply({ content: 'No VC found.', ephemeral: true });
-      }
-
-      const requestId = Date.now().toString();
-      requests.set(requestId, {
-        owner: user.id,
-        requester: i.user.id,
-        channel: vc.channel_id,
-      });
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`accept_${requestId}`)
-          .setLabel('Accept')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(`deny_${requestId}`)
-          .setLabel('Deny')
-          .setStyle(ButtonStyle.Danger)
-      );
-
-      await i.reply({ content: 'Request sent.', ephemeral: true });
-
-      try {
-        await user.send({
-          content: `${i.user.tag} wants to join your VC`,
-          components: [row],
+        const id = Date.now().toString();
+        requests.set(id, {
+          owner: user.id,
+          requester: i.user.id,
+          channel: vc.channel_id,
         });
-      } catch {
-        i.followUp({ content: 'User has DMs off.', ephemeral: true });
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`accept_${id}`)
+            .setLabel('Accept')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`deny_${id}`)
+            .setLabel('Deny')
+            .setStyle(ButtonStyle.Danger)
+        );
+
+        await i.reply({ content: 'Request sent.', ephemeral: true });
+
+        try {
+          await user.send({
+            content: `${i.user.tag} wants to join your VC`,
+            components: [row],
+          });
+        } catch {
+          i.followUp({ content: 'User has DMs off.', ephemeral: true });
+        }
       }
     }
 
