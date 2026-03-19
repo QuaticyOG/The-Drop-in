@@ -461,7 +461,7 @@ if (i.commandName === 'postreact') {
   const embed = new EmbedBuilder()
     .setTitle('🔔 Notifications')
     .setDescription(
-      'Click the button below to **toggle notifications** for streams.\n\nYou will get pinged when Quaticy or Cauz goes live.'
+      'Click the button below to **toggle notifications** for streams or giveaways.\n\nYou will get pinged when Quaticy or Cauz goes live. Or when we are hosting a giveaway.'
     )
     .setColor('#f70707');
 
