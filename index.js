@@ -302,7 +302,7 @@ require('dotenv').config();
           'Empty VCs are automatically deleted.',
       }
     )
-    .setColor('#f70707');
+    .setColor('#f70707')
     .setFooter({ text: 'Enjoy your stay 💜' });
 
   await i.channel.send({ embeds: [embed] });
@@ -379,7 +379,7 @@ require('dotenv').config();
           'See something wrong? Contact Mods immediately.',
       }
     )
-    .setColor('#f70707');
+    .setColor('#f70707')
     .setFooter({ text: 'Failure to follow rules may result in punishment.' });
 
   await i.channel.send({ embeds: [embed] });
