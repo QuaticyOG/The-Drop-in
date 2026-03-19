@@ -482,12 +482,69 @@ if (i.isButton()) {
   }
 }
   
-  // ==============================
-  // COMMAND HANDLER
-  // ==============================
+// ==============================
+// COMMAND HANDLER
+// ==============================
   if (i.isChatInputCommand()) {
 
-    // ==============================
+    if (i.commandName === 'requestjoin') {
+
+  const target = i.options.getUser('user');
+  const guild = i.guild;
+
+  // 🔍 find VC
+  const vc = await getVCByOwner(target.id, guild.id);
+
+  if (!vc) {
+    return i.reply({ content: '❌ User has no private VC.', ephemeral: true });
+  }
+
+  const channel = guild.channels.cache.get(vc.channel_id);
+
+  if (!channel) {
+    return i.reply({ content: '❌ VC not found.', ephemeral: true });
+  }
+
+  const id = Date.now().toString();
+
+  // 💾 store request
+  requests.set(id, {
+    owner: target.id,
+    requester: i.user.id,
+    channel: channel.id,
+    guildId: guild.id,
+  });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`accept_${id}`)
+      .setLabel('Accept')
+      .setStyle(ButtonStyle.Success),
+
+    new ButtonBuilder()
+      .setCustomId(`deny_${id}`)
+      .setLabel('Deny')
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  const requestChannel = guild.channels.cache.get(REQUEST_CHANNEL_ID);
+
+  if (!requestChannel) {
+    return i.reply({ content: '❌ Request channel not set.', ephemeral: true });
+  }
+
+  await requestChannel.send({
+    content: `📩 <@${target.id}>, <@${i.user.id}> wants to join your VC`,
+    components: [row],
+  });
+
+  return i.reply({
+    content: '✅ Request sent!',
+    ephemeral: true,
+  });
+}
+    
+// ==============================
 // END GIVEAWAY
 // ==============================
 if (i.commandName === 'endgiveaway') {
