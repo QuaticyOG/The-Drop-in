@@ -302,7 +302,7 @@ require('dotenv').config();
           'Empty VCs are automatically deleted.',
       }
     )
-    .setColor(0x5865F2)
+    .setColor('#f70707');
     .setFooter({ text: 'Enjoy your stay 💜' });
 
   await i.channel.send({ embeds: [embed] });
