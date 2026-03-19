@@ -265,25 +265,53 @@ require('dotenv').config();
       // INFO
       // ==============================
       if (i.commandName === 'postinfo') {
-        const embed = new EmbedBuilder()
-          .setTitle('🎧 Private Voice Channels')
-          .setDescription('Here’s how our VC system works:')
-          .addFields(
-            { name: '🛠 Create a VC', value: 'Join the "🫵 ᴄʀᴇᴀᴛᴇ ᴘʀɪᴠᴀᴛᴇ ᴠᴄ" channel.' },
-            { name: '👀 Visibility', value: 'Everyone can see but not join.' },
-            { name: '📩 Request Access', value: 'Use /requestjoin @user.' },
-            { name: '✅ Approval', value: 'Owner approves requests.' },
-            { name: '🗑 Cleanup', value: 'VC deletes when empty.' }
-          )
-          .setColor('#f70707');
-
-        await i.channel.send({ embeds: [embed] });
-
-        return i.reply({
-          content: 'Posted!',
-          ephemeral: true, // only you see this
-        });
+  const embed = new EmbedBuilder()
+    .setTitle('🎧 Welcome to Quaticy & Cauz Community')
+    .setDescription(
+      'This server is the official community for **Quaticy** ⚡ and **Cauz** — built for chilling, gaming, and streaming together.\n\nWhether you’re here from stream or just vibing, you’re welcome 👀'
+    )
+    .addFields(
+      {
+        name: '📺 Streaming Notifications',
+        value:
+          'Stay updated when we go live in <#1483825983092949072> — you’ll get notified automatically when we start streaming.',
+      },
+      {
+        name: '📜 Rules',
+        value:
+          'Make sure to read <#1483826481691103373> before chatting to keep everything smooth.',
+      },
+      {
+        name: '🎧 Private Voice Channels',
+        value:
+          'Join the **Create VC** channel to get your own private room.',
+      },
+      {
+        name: '👀 Visibility',
+        value:
+          'Everyone can see VCs, but only approved users can join.',
+      },
+      {
+        name: '📩 Request Access',
+        value:
+          'Use `/requestjoin @user` to ask to join someone’s VC.',
+      },
+      {
+        name: '🗑 Auto Cleanup',
+        value:
+          'Empty VCs are automatically deleted.',
       }
+    )
+    .setColor(0x5865F2)
+    .setFooter({ text: 'Enjoy your stay 💜' });
+
+  await i.channel.send({ embeds: [embed] });
+
+  return i.reply({
+    content: 'Posted!',
+    ephemeral: true,
+  });
+}
 
       // ==============================
       // RULES
