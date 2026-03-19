@@ -277,7 +277,12 @@ require('dotenv').config();
           )
           .setColor('#f70707');
 
-        return i.reply({ embeds: [embed] });
+        await i.channel.send({ embeds: [embed] });
+
+        return i.reply({
+          content: 'Posted!',
+          ephemeral: true, // only you see this
+        });
       }
 
       // ==============================
@@ -294,7 +299,12 @@ require('dotenv').config();
           )
           .setColor('#f70707');
 
-        return i.reply({ embeds: [embed] });
+        await i.channel.send({ embeds: [embed] });
+
+        return i.reply({
+          content: 'Posted!',
+          ephemeral: true, // only you see this
+        });
       }
 
       // ==============================
