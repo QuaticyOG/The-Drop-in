@@ -443,12 +443,9 @@ if (action === 'accept') {
   } else {
     // ❌ Not in VC → just notify
     await i.update({
-      await i.update({
         content: `✅ Accepted!\n🔓 <@${data.requester}> you can now join: <#${ch.id}>`,
         components: [],
       });
-      components: [],
-    });
   }
 
   requests.delete(id);
