@@ -194,7 +194,11 @@ require('dotenv').config();
         .addUserOption(option =>
           option.setName('user').setDescription('VC owner').setRequired(true)
         ),
-
+      
+      new SlashCommandBuilder()
+        .setName('postreact')
+        .setDescription('Post notification role button'),
+      
       new SlashCommandBuilder().setName('postinfo').setDescription('Post VC system info'),
       new SlashCommandBuilder().setName('postrules').setDescription('Post VC rules'),
     ].map(cmd => cmd.toJSON());
@@ -267,6 +271,58 @@ require('dotenv').config();
   });
 
   client.on(Events.InteractionCreate, async (i) => {
+    // ==============================
+// BUTTON HANDLER (MERGED)
+// ==============================
+if (i.isButton()) {
+
+  // 🔔 Toggle Notifications Role
+  if (i.customId === 'toggle_notifications') {
+    const roleId = '1484186734714552360';
+    const member = await i.guild.members.fetch(i.user.id);
+
+    if (member.roles.cache.has(roleId)) {
+      await member.roles.remove(roleId);
+
+      return i.reply({
+        content: '❌ Notifications disabled.',
+        ephemeral: true,
+      });
+    } else {
+      await member.roles.add(roleId);
+
+      return i.reply({
+        content: '✅ Notifications enabled!',
+        ephemeral: true,
+      });
+    }
+  }
+
+  // VC request buttons
+  const [action, id] = i.customId.split('_');
+  const data = requests.get(id);
+  if (!data) return;
+
+  if (i.user.id !== data.owner) {
+    return i.reply({ content: 'Not your request.', ephemeral: true });
+  }
+
+  const guild = client.guilds.cache.get(data.guildId);
+  if (!guild) return;
+
+  const ch = guild.channels.cache.get(data.channel);
+
+  if (action === 'accept') {
+    await ch.permissionOverwrites.edit(data.requester, {
+      ViewChannel: true,
+      Connect: true,
+    });
+
+    return i.update({ content: '✅ Accepted', components: [] });
+  } else {
+    return i.update({ content: '❌ Denied', components: [] });
+  }
+}
     if (i.isChatInputCommand()) {
 
       // ==============================
@@ -398,6 +454,34 @@ require('dotenv').config();
         });
       }
 
+      // ==============================
+      // POST REACT ROLE
+      // ==============================
+if (i.commandName === 'postreact') {
+  const embed = new EmbedBuilder()
+    .setTitle('🔔 Notifications')
+    .setDescription(
+      'Click the button below to **toggle notifications** for streams.\n\nYou will get pinged when Quaticy or Cauz goes live.'
+    )
+    .setColor('#f70707');
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('toggle_notifications')
+      .setLabel('Toggle Notifications')
+      .setStyle(ButtonStyle.Danger) // red button
+  );
+
+  await i.channel.send({
+    embeds: [embed],
+    components: [row],
+  });
+
+  return i.reply({
+    content: 'Posted!',
+    ephemeral: true,
+  });
+}
       // REQUEST JOIN (unchanged)
       if (i.commandName === 'requestjoin') {
         const user = i.options.getUser('user');
