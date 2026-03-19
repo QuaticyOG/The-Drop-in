@@ -13,6 +13,7 @@ require('dotenv').config();
     REST,
     Routes,
     SlashCommandBuilder,
+    EmbedBuilder, // ✅ added
   } = require('discord.js');
 
   const { Pool } = require('pg');
@@ -143,26 +144,22 @@ require('dotenv').config();
       name: `${member.displayName}'s Room`,
       type: ChannelType.GuildVoice,
       parent: PRIVATE_VC_CATEGORY_ID || null,
-permissionOverwrites: [
-  {
-    id: guild.id,
-    allow: [
-      PermissionsBitField.Flags.ViewChannel, // 👀 everyone can see
-    ],
-    deny: [
-      PermissionsBitField.Flags.Connect, // 🔒 no joining by default
-    ],
-  },
-  {
-    id: member.id,
-    allow: [
-      PermissionsBitField.Flags.ViewChannel,
-      PermissionsBitField.Flags.Connect,
-      PermissionsBitField.Flags.Speak,
-      PermissionsBitField.Flags.Stream,
-    ],
-  },
-],
+      permissionOverwrites: [
+        {
+          id: guild.id,
+          allow: [PermissionsBitField.Flags.ViewChannel],
+          deny: [PermissionsBitField.Flags.Connect],
+        },
+        {
+          id: member.id,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.Connect,
+            PermissionsBitField.Flags.Speak,
+            PermissionsBitField.Flags.Stream,
+          ],
+        },
+      ],
     });
 
     await saveVC(channel.id, member.id, guild.id);
@@ -212,6 +209,14 @@ permissionOverwrites: [
               .setDescription('VC owner')
               .setRequired(true)
           ),
+
+        new SlashCommandBuilder()
+          .setName('postinfo')
+          .setDescription('Post VC system info'),
+
+        new SlashCommandBuilder()
+          .setName('postrules')
+          .setDescription('Post VC rules'),
       ].map(cmd => cmd.toJSON());
 
       const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -255,6 +260,46 @@ permissionOverwrites: [
 
   client.on(Events.InteractionCreate, async (i) => {
     if (i.isChatInputCommand()) {
+
+      // ==============================
+      // INFO
+      // ==============================
+      if (i.commandName === 'postinfo') {
+        const embed = new EmbedBuilder()
+          .setTitle('🎧 Private Voice Channels')
+          .setDescription('Here’s how our VC system works:')
+          .addFields(
+            { name: '🛠 Create a VC', value: 'Join the "🫵 ᴄʀᴇᴀᴛᴇ ᴘʀɪᴠᴀᴛᴇ ᴠᴄ" channel.' },
+            { name: '👀 Visibility', value: 'Everyone can see but not join.' },
+            { name: '📩 Request Access', value: 'Use /requestjoin @user.' },
+            { name: '✅ Approval', value: 'Owner approves requests.' },
+            { name: '🗑 Cleanup', value: 'VC deletes when empty.' }
+          )
+          .setColor(#f70707);
+
+        return i.reply({ embeds: [embed] });
+      }
+
+      // ==============================
+      // RULES
+      // ==============================
+      if (i.commandName === 'postrules') {
+        const embed = new EmbedBuilder()
+          .setTitle('📜 VC Rules')
+          .addFields(
+            { name: '1. Respect owners', value: 'Owners controls access.' },
+            { name: '2. No harassment', value: 'Be respectful.' },
+            { name: '3. No spam', value: 'Don’t spam requests.' },
+            { name: '4. Follow rules', value: 'Server rules apply.' }
+          )
+          .setColor(#f70707);
+
+        return i.reply({ embeds: [embed] });
+      }
+
+      // ==============================
+      // REQUEST JOIN
+      // ==============================
       if (i.commandName === 'requestjoin') {
         const user = i.options.getUser('user');
         const vc = await getVCByOwner(user.id, i.guild.id);
@@ -269,7 +314,7 @@ permissionOverwrites: [
           owner: user.id,
           requester: i.user.id,
           channel: vc.channel_id,
-          guildId: i.guild.id, // 🔥 FIXED
+          guildId: i.guild.id,
         });
 
         const row = new ActionRowBuilder().addComponents(
@@ -297,10 +342,7 @@ permissionOverwrites: [
           components: [row],
         });
 
-        await i.reply({
-          content: 'Request sent!',
-          ephemeral: true,
-        });
+        await i.reply({ content: 'Request sent!', ephemeral: true });
       }
     }
 
@@ -333,12 +375,6 @@ permissionOverwrites: [
       requests.delete(id);
     }
   });
-
-  /*
-  ==============================
-  START
-  ==============================
-  */
 
   await client.login(process.env.TOKEN);
 })();
