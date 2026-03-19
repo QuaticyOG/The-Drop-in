@@ -237,7 +237,11 @@ async function restoreGiveaways() {
     await saveVC(channel.id, member.id, guild.id);
     cooldowns.set(member.id, now + VC_CREATE_COOLDOWN);
 
-    await member.voice.setChannel(channel);
+    try {
+  await member.voice.setChannel(channel);
+} catch (err) {
+  console.error('Move failed:', err);
+}
   }
 
   async function deleteIfEmpty(channel) {
@@ -357,8 +361,28 @@ new SlashCommandBuilder()
 
   client.on(Events.GuildMemberAdd, giveRole);
 
-client.on(Events.InteractionCreate, async (i) => {
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 
+  // CREATE VC
+  if (
+    newState.channelId === CREATE_VC_CHANNEL_ID &&
+    newState.member
+  ) {
+    setTimeout(() => {
+  createVC(newState.member);
+}, 500);
+  }
+
+  // DELETE VC
+  if (oldState.channel && oldState.channel.id !== CREATE_VC_CHANNEL_ID) {
+    setTimeout(() => {
+      deleteIfEmpty(oldState.channel);
+    }, 2000);
+  }
+});
+  
+client.on(Events.InteractionCreate, async (i) => {
+  
 // ==============================
 // BUTTON HANDLER
 // ==============================
