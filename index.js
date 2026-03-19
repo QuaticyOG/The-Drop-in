@@ -224,6 +224,7 @@ require('dotenv').config();
               liveCache.set(name, true);
 
               await channel.send({
+                content: `<@&1484186734714552360>`,
                 embeds: [
                   {
                     title: `📺 ${name} is LIVE!`,
