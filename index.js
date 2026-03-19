@@ -317,23 +317,78 @@ require('dotenv').config();
       // RULES
       // ==============================
       if (i.commandName === 'postrules') {
-        const embed = new EmbedBuilder()
-          .setTitle('📜 VC Rules')
-          .addFields(
-            { name: '1. Respect owners', value: 'Owners controls access.' },
-            { name: '2. No harassment', value: 'Be respectful.' },
-            { name: '3. No spam', value: 'Don’t spam requests.' },
-            { name: '4. Follow rules', value: 'Server rules apply.' }
-          )
-          .setColor('#f70707');
-
-        await i.channel.send({ embeds: [embed] });
-
-        return i.reply({
-          content: 'Posted!',
-          ephemeral: true, // only you see this
-        });
+  const embed = new EmbedBuilder()
+    .setTitle('📖 Server Rules & Guidelines')
+    .setDescription(
+      'Welcome to the **Quaticy & Cauz Community**!\nPlease follow these rules to keep the server safe, respectful, and enjoyable for everyone 🙌'
+    )
+    .addFields(
+      {
+        name: '📜 Discord Terms',
+        value:
+          '[Terms](https://discord.com/terms)\n[Guidelines](https://discord.com/guidelines)',
+      },
+      {
+        name: '🤝 Respect Everyone',
+        value:
+          'No racism, discrimination, hate speech, or harassment.\nContext matters — but targeting or insulting others is never allowed.',
+      },
+      {
+        name: '🚫 No Harassment or Spam',
+        value:
+          'Avoid spamming, trolling, or disruptive behavior.',
+      },
+      {
+        name: '📢 No Advertising',
+        value:
+          'No self-promo or advertising other servers/services.',
+      },
+      {
+        name: '🔞 No NSFW Content',
+        value:
+          'Strictly no adult or inappropriate content.',
+      },
+      {
+        name: '⚠️ No Scamming',
+        value:
+          'Any scams or fraud will result in immediate action.',
+      },
+      {
+        name: '🛡️ Protect Privacy',
+        value:
+          'Do not share personal or private information.',
+      },
+      {
+        name: '🏛️ Content Rules',
+        value:
+          'Use correct channels and avoid political/religious debates.',
+      },
+      {
+        name: '👮 Respect Staff',
+        value:
+          'Staff decisions are final — they’re here to help everyone.',
+      },
+      {
+        name: '🎉 Giveaways',
+        value:
+          'Everyone can join if they meet the requirements (boosters, roles, etc).',
+      },
+      {
+        name: '🚨 Report Issues',
+        value:
+          'See something wrong? Contact Mods immediately.',
       }
+    )
+    .setColor('#f70707');
+    .setFooter({ text: 'Failure to follow rules may result in punishment.' });
+
+  await i.channel.send({ embeds: [embed] });
+
+  return i.reply({
+    content: 'Posted!',
+    ephemeral: true,
+  });
+}
 
       // ==============================
       // REQUEST JOIN
