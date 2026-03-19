@@ -54,6 +54,25 @@ require('dotenv').config();
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // ✅ GIVEAWAYS TABLES
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS giveaways (
+        message_id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        guild_id TEXT NOT NULL,
+        end_time BIGINT NOT NULL
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS giveaway_participants (
+        message_id TEXT,
+        user_id TEXT,
+        PRIMARY KEY (message_id, user_id)
+      );
+    `);
+
     console.log('✅ Database ready');
   }
 
@@ -85,6 +104,50 @@ require('dotenv').config();
     );
     return r.rows[0];
   };
+
+  // =========================
+  // GIVEAWAY SYSTEM
+  // =========================
+  async function endGiveaway(client, pool, g) {
+    try {
+      const participantsRes = await pool.query(
+        'SELECT user_id FROM giveaway_participants WHERE message_id = $1',
+        [g.message_id]
+      );
+
+      const participants = participantsRes.rows.map(r => r.user_id);
+
+      const channel = await client.channels.fetch(g.channel_id).catch(() => null);
+      if (!channel) return;
+
+      if (participants.length === 0) {
+        await channel.send('❌ Giveaway ended. No participants.');
+      } else {
+        const winner = participants[Math.floor(Math.random() * participants.length)];
+        await channel.send(`🎉 Winner: <@${winner}>`);
+      }
+
+      await pool.query('DELETE FROM giveaways WHERE message_id = $1', [g.message_id]);
+      await pool.query('DELETE FROM giveaway_participants WHERE message_id = $1', [g.message_id]);
+
+    } catch (err) {
+      console.error('Giveaway error:', err);
+    }
+  }
+
+  async function restoreGiveaways() {
+    const res = await pool.query('SELECT * FROM giveaways');
+
+    for (const g of res.rows) {
+      const remaining = g.end_time - Date.now();
+
+      if (remaining <= 0) {
+        endGiveaway(client, pool, g);
+      } else {
+        setTimeout(() => endGiveaway(client, pool, g), remaining);
+      }
+    }
+  }
 
   // =========================
   // TWITCH
@@ -135,7 +198,7 @@ require('dotenv').config();
     const guild = member.guild;
     const now = Date.now();
 
-    if (cooldowns.get(member.id) > now) return;
+    if (cooldowns.has(member.id) && cooldowns.get(member.id) > now) return;
 
     const existing = await getVCByOwner(member.id, guild.id);
     if (existing) {
@@ -174,7 +237,7 @@ require('dotenv').config();
   async function deleteIfEmpty(channel) {
     const db = await getVCByChannel(channel.id);
     if (!db) return;
-    if (channel.members.size > 0) return;
+    if (channel.members?.size) return;
 
     await deleteVC(channel.id);
     await channel.delete();
@@ -186,6 +249,7 @@ require('dotenv').config();
     await pool.query('SELECT 1');
     console.log('Connected to PostgreSQL successfully.');
     await initDatabase();
+    await restoreGiveaways();
 
     const commands = [
       new SlashCommandBuilder()
@@ -194,13 +258,22 @@ require('dotenv').config();
         .addUserOption(option =>
           option.setName('user').setDescription('VC owner').setRequired(true)
         ),
-      
+
       new SlashCommandBuilder()
         .setName('postreact')
         .setDescription('Post notification role button'),
-      
+
       new SlashCommandBuilder().setName('postinfo').setDescription('Post VC system info'),
       new SlashCommandBuilder().setName('postrules').setDescription('Post VC rules'),
+
+      // ✅ GIVEAWAY COMMAND
+      new SlashCommandBuilder()
+        .setName('giveaway')
+        .setDescription('Start a giveaway')
+        .addStringOption(o => o.setName('title').setDescription('Title').setRequired(true))
+        .addStringOption(o => o.setName('description').setDescription('Description').setRequired(true))
+        .addIntegerOption(o => o.setName('duration').setDescription('Seconds').setRequired(true))
+        .addStringOption(o => o.setName('image').setDescription('Image URL').setRequired(false)),
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -212,7 +285,6 @@ require('dotenv').config();
 
     console.log('✅ Slash commands deployed');
 
-    // Twitch checker (FIXED)
     setInterval(async () => {
       try {
         const channel = client.channels.cache.get(STREAM_CHANNEL_ID);
@@ -256,27 +328,50 @@ require('dotenv').config();
 
   client.on(Events.GuildMemberAdd, giveRole);
 
-  client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-    const member = newState.member;
-    if (!member || member.user.bot) return;
+client.on(Events.InteractionCreate, async (i) => {
 
-    if (newState.channelId === CREATE_VC_CHANNEL_ID) {
-      await createVC(member);
-    }
-
-    if (oldState.channelId) {
-      const ch = oldState.guild.channels.cache.get(oldState.channelId);
-      if (ch) await deleteIfEmpty(ch);
-    }
-  });
-
-  client.on(Events.InteractionCreate, async (i) => {
-    // ==============================
-// BUTTON HANDLER (MERGED)
+// ==============================
+// BUTTON HANDLER
 // ==============================
 if (i.isButton()) {
 
-  // 🔔 Toggle Notifications Role
+  // ==============================
+  // VC REQUEST BUTTONS
+  // ==============================
+  if (i.customId.includes('_')) {
+    const [action, id] = i.customId.split('_');
+    const data = requests.get(id);
+
+    if (data) {
+      if (i.user.id !== data.owner) {
+        return i.reply({ content: 'Not your request.', ephemeral: true });
+      }
+
+      const guild = client.guilds.cache.get(data.guildId);
+      if (!guild) return;
+
+      const ch = guild.channels.cache.get(data.channel);
+
+      if (action === 'accept') {
+        await ch.permissionOverwrites.edit(data.requester, {
+          ViewChannel: true,
+          Connect: true,
+        });
+
+        requests.delete(id);
+        return i.update({ content: '✅ Accepted', components: [] });
+      }
+
+      if (action === 'deny') {
+        requests.delete(id);
+        return i.update({ content: '❌ Denied', components: [] });
+      }
+    }
+  }
+
+  // ==============================
+  // TOGGLE NOTIFICATIONS
+  // ==============================
   if (i.customId === 'toggle_notifications') {
     const roleId = '1484186734714552360';
     const member = await i.guild.members.fetch(i.user.id);
@@ -298,224 +393,232 @@ if (i.isButton()) {
     }
   }
 
-  // VC request buttons
-  const [action, id] = i.customId.split('_');
-  const data = requests.get(id);
-  if (!data) return;
+  // ==============================
+  // GIVEAWAY JOIN
+  // ==============================
+  if (i.customId.startsWith('giveaway_join_')) {
+    const exists = await pool.query(
+      'SELECT 1 FROM giveaway_participants WHERE message_id=$1 AND user_id=$2',
+      [i.message.id, i.user.id]
+    );
 
-  if (i.user.id !== data.owner) {
-    return i.reply({ content: 'Not your request.', ephemeral: true });
-  }
-
-  const guild = client.guilds.cache.get(data.guildId);
-  if (!guild) return;
-
-  const ch = guild.channels.cache.get(data.channel);
-
-  if (action === 'accept') {
-    await ch.permissionOverwrites.edit(data.requester, {
-      ViewChannel: true,
-      Connect: true,
-    });
-
-    return i.update({ content: '✅ Accepted', components: [] });
-  } else {
-    return i.update({ content: '❌ Denied', components: [] });
-  }
-}
-    if (i.isChatInputCommand()) {
-
-      // ==============================
-      // INFO (YOUR FULL VERSION)
-      // ==============================
-      if (i.commandName === 'postinfo') {
-        const embed = new EmbedBuilder()
-          .setTitle('🎧 Welcome to The Rubber Hose Club')
-          .setDescription(
-            'This server is the official community for **Quaticy** ⚡ and **Cauz** — built for chilling, gaming, and streaming together.\n\nWhether you’re here from stream or just vibing, you’re welcome 👀'
-          )
-          .addFields(
-            {
-              name: '📺 Streaming Notifications',
-              value:
-                'Stay updated when we go live in <#1483825983092949072> — you’ll get notified automatically when we start streaming.',
-            },
-            {
-              name: '📜 Rules',
-              value:
-                'Make sure to read <#1483826481691103373> before chatting to keep everything smooth.',
-            },
-            {
-              name: '🎧 Private Voice Channels',
-              value:
-                'Join the **Create VC** channel to get your own private room.',
-            },
-            {
-              name: '👀 Visibility',
-              value:
-                'Everyone can see VCs, but only approved users can join.',
-            },
-            {
-              name: '📩 Request Access',
-              value:
-                'Use `/requestjoin @user` to ask to join someone’s VC.',
-            },
-            {
-              name: '🗑 Auto Cleanup',
-              value:
-                'Empty VCs are automatically deleted.',
-            }
-          )
-          .setColor('#f70707')
-          .setFooter({ text: 'Enjoy your stay 💜' });
-
-        await i.channel.send({ embeds: [embed] });
-
-        return i.reply({
-          content: 'Posted!',
-          ephemeral: true,
-        });
-      }
-
-      // ==============================
-      // RULES (YOUR FULL VERSION)
-      // ==============================
-      if (i.commandName === 'postrules') {
-        const embed = new EmbedBuilder()
-          .setTitle('📖 Server Rules & Guidelines')
-          .setDescription(
-            'Welcome to the **The Rubber Hose Club**!\nPlease follow these rules to keep the server safe, respectful, and enjoyable for everyone 🙌'
-          )
-          .addFields(
-            {
-              name: '📜 Discord Terms',
-              value:
-                '[Terms](https://discord.com/terms)\n[Guidelines](https://discord.com/guidelines)',
-            },
-            {
-              name: '🤝 Respect Everyone',
-              value:
-                'No racism, discrimination, hate speech, or harassment.\nContext matters — but targeting or insulting others is never allowed.',
-            },
-            {
-              name: '🚫 No Harassment or Spam',
-              value:
-                'Avoid spamming, trolling, or disruptive behavior.',
-            },
-            {
-              name: '📢 No Advertising',
-              value:
-                'No self-promo or advertising other servers/services.',
-            },
-            {
-              name: '🔞 No NSFW Content',
-              value:
-                'Strictly no adult or inappropriate content.',
-            },
-            {
-              name: '⚠️ No Scamming',
-              value:
-                'Any scams or fraud will result in immediate action.',
-            },
-            {
-              name: '🛡️ Protect Privacy',
-              value:
-                'Do not share personal or private information.',
-            },
-            {
-              name: '🏛️ Content Rules',
-              value:
-                'Use correct channels and avoid political/religious debates.',
-            },
-            {
-              name: '👮 Respect Staff',
-              value:
-                'Staff decisions are final — they’re here to help everyone.',
-            },
-            {
-              name: '🎉 Giveaways',
-              value:
-                'Everyone can join if they meet the requirements (boosters, roles, etc).',
-            },
-            {
-              name: '🚨 Report Issues',
-              value:
-                'See something wrong? Contact Mods immediately.',
-            }
-          )
-          .setColor('#f70707')
-          .setFooter({ text: 'Failure to follow rules may result in punishment.' });
-
-        await i.channel.send({ embeds: [embed] });
-
-        return i.reply({
-          content: 'Posted!',
-          ephemeral: true,
-        });
-      }
-
-      // ==============================
-      // POST REACT ROLE
-      // ==============================
-if (i.commandName === 'postreact') {
-  const embed = new EmbedBuilder()
-    .setTitle('🔔 Notifications')
-    .setDescription(
-      'Click the button below to **toggle notifications** for streams or giveaways.\n\nYou will get pinged when Quaticy or Cauz goes live. Or when we are hosting a giveaway.'
-    )
-    .setColor('#f70707');
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('toggle_notifications')
-      .setLabel('Toggle Notifications')
-      .setStyle(ButtonStyle.Danger) // red button
-  );
-
-  await i.channel.send({
-    embeds: [embed],
-    components: [row],
-  });
-
-  return i.reply({
-    content: 'Posted!',
-    ephemeral: true,
-  });
-}
-      // REQUEST JOIN (unchanged)
-      if (i.commandName === 'requestjoin') {
-        const user = i.options.getUser('user');
-        const vc = await getVCByOwner(user.id, i.guild.id);
-
-        if (!vc) {
-          return i.reply({ content: 'No VC found.', ephemeral: true });
-        }
-
-        const id = Date.now().toString();
-
-        requests.set(id, {
-          owner: user.id,
-          requester: i.user.id,
-          channel: vc.channel_id,
-          guildId: i.guild.id,
-        });
-
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`accept_${id}`).setLabel('Accept').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`deny_${id}`).setLabel('Deny').setStyle(ButtonStyle.Danger)
-        );
-
-        const requestChannel = i.guild.channels.cache.get(REQUEST_CHANNEL_ID);
-
-        await requestChannel.send({
-          content: `🔔 **VC Join Request**\nRequester: <@${i.user.id}>\nOwner: <@${user.id}>`,
-          components: [row],
-        });
-
-        await i.reply({ content: 'Request sent!', ephemeral: true });
-      }
+    if (exists.rowCount > 0) {
+      return i.reply({ content: '❌ Already joined!', ephemeral: true });
     }
-  });
 
+    await pool.query(
+      'INSERT INTO giveaway_participants (message_id, user_id) VALUES ($1,$2)',
+      [i.message.id, i.user.id]
+    );
+
+    return i.reply({ content: '✅ Joined!', ephemeral: true });
+  }
+}
+  
+  // ==============================
+  // COMMAND HANDLER
+  // ==============================
+  if (i.isChatInputCommand()) {
+
+    // ==============================
+    // GIVEAWAY
+    // ==============================
+    if (i.commandName === 'giveaway') {
+
+      const allowedRole = '1483822511987888243';
+
+      if (!i.member.roles.cache.has(allowedRole)) {
+        return i.reply({ content: '❌ No permission', ephemeral: true });
+      }
+
+      const title = i.options.getString('title');
+      const description = i.options.getString('description');
+      const duration = i.options.getInteger('duration');
+      const image = i.options.getString('image');
+
+      const endTime = Date.now() + duration * 1000;
+
+      const embed = new EmbedBuilder()
+        .setColor('#f70707')
+        .setTitle(`🎉 ${title}`)
+        .setDescription(`${description}\n\n⏰ Ends <t:${Math.floor(endTime / 1000)}:R>`);
+
+      if (image) embed.setImage(image);
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`giveaway_join_${Date.now()}`)
+          .setLabel('Join Giveaway')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      const msg = await i.reply({
+        embeds: [embed],
+        components: [row],
+        fetchReply: true,
+      });
+
+      await pool.query(
+        'INSERT INTO giveaways (message_id, channel_id, guild_id, end_time) VALUES ($1,$2,$3,$4)',
+        [msg.id, msg.channel.id, msg.guild.id, endTime]
+      );
+
+      setTimeout(() => endGiveaway(client, pool, {
+        message_id: msg.id,
+        channel_id: msg.channel.id,
+        guild_id: msg.guild.id,
+        end_time: endTime
+      }), duration * 1000);
+    }
+
+    // ==============================
+    // INFO
+    // ==============================
+    if (i.commandName === 'postinfo') {
+      const embed = new EmbedBuilder()
+        .setTitle('🎧 Welcome to The Rubber Hose Club')
+        .setDescription(
+          'This server is the official community for **Quaticy** ⚡ and **Cauz** — built for chilling, gaming, and streaming together.\n\nWhether you’re here from stream or just vibing, you’re welcome 👀'
+        )
+        .addFields(
+          {
+            name: '📺 Streaming Notifications',
+            value:
+              'Stay updated when we go live in <#1483825983092949072> — you’ll get notified automatically when we start streaming.',
+          },
+          {
+            name: '📜 Rules',
+            value:
+              'Make sure to read <#1483826481691103373> before chatting to keep everything smooth.',
+          },
+          {
+            name: '🎧 Private Voice Channels',
+            value:
+              'Join the **Create VC** channel to get your own private room.',
+          },
+          {
+            name: '👀 Visibility',
+            value:
+              'Everyone can see VCs, but only approved users can join.',
+          },
+          {
+            name: '📩 Request Access',
+            value:
+              'Use `/requestjoin @user` to ask to join someone’s VC.',
+          },
+          {
+            name: '🗑 Auto Cleanup',
+            value:
+              'Empty VCs are automatically deleted.',
+          }
+        )
+        .setColor('#f70707')
+        .setFooter({ text: 'Enjoy your stay 💜' });
+
+      await i.channel.send({ embeds: [embed] });
+      return i.reply({ content: 'Posted!', ephemeral: true });
+    }
+
+    // ==============================
+    // RULES
+    // ==============================
+    if (i.commandName === 'postrules') {
+      const embed = new EmbedBuilder()
+        .setTitle('📖 Server Rules & Guidelines')
+        .setDescription(
+          'Welcome to the **The Rubber Hose Club**!\nPlease follow these rules to keep the server safe, respectful, and enjoyable for everyone 🙌'
+        )
+        .addFields(
+          {
+            name: '📜 Discord Terms',
+            value:
+              '[Terms](https://discord.com/terms)\n[Guidelines](https://discord.com/guidelines)',
+          },
+          {
+            name: '🤝 Respect Everyone',
+            value:
+              'No racism, discrimination, hate speech, or harassment.\nContext matters — but targeting or insulting others is never allowed.',
+          },
+          {
+            name: '🚫 No Harassment or Spam',
+            value:
+              'Avoid spamming, trolling, or disruptive behavior.',
+          },
+          {
+            name: '📢 No Advertising',
+            value:
+              'No self-promo or advertising other servers/services.',
+          },
+          {
+            name: '🔞 No NSFW Content',
+            value:
+              'Strictly no adult or inappropriate content.',
+          },
+          {
+            name: '⚠️ No Scamming',
+            value:
+              'Any scams or fraud will result in immediate action.',
+          },
+          {
+            name: '🛡️ Protect Privacy',
+            value:
+              'Do not share personal or private information.',
+          },
+          {
+            name: '🏛️ Content Rules',
+            value:
+              'Use correct channels and avoid political/religious debates.',
+          },
+          {
+            name: '👮 Respect Staff',
+            value:
+              'Staff decisions are final — they’re here to help everyone.',
+          },
+          {
+            name: '🎉 Giveaways',
+            value:
+              'Everyone can join if they meet the requirements (boosters, roles, etc).',
+          },
+          {
+            name: '🚨 Report Issues',
+            value:
+              'See something wrong? Contact Mods immediately.',
+          }
+        )
+        .setColor('#f70707')
+        .setFooter({ text: 'Failure to follow rules may result in punishment.' });
+
+      await i.channel.send({ embeds: [embed] });
+      return i.reply({ content: 'Posted!', ephemeral: true });
+    }
+
+    // ==============================
+    // POST REACT
+    // ==============================
+    if (i.commandName === 'postreact') {
+      const embed = new EmbedBuilder()
+        .setTitle('🔔 Notifications')
+        .setDescription(
+          'Click the button below to **toggle notifications** for streams or giveaways.\n\nYou will get pinged when Quaticy or Cauz goes live. Or when we are hosting a giveaway.'
+        )
+        .setColor('#f70707');
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('toggle_notifications')
+          .setLabel('Toggle Notifications')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      await i.channel.send({
+        embeds: [embed],
+        components: [row],
+      });
+
+      return i.reply({ content: 'Posted!', ephemeral: true });
+    }
+  }
+});
+  
   await client.login(process.env.TOKEN);
 })();
