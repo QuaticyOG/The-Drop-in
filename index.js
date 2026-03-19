@@ -200,49 +200,63 @@ async function restoreGiveaways() {
     } catch {}
   }
 
-  async function createVC(member) {
-    const guild = member.guild;
-    const now = Date.now();
+async function createVC(member) {
+  const guild = member.guild;
+  const now = Date.now();
 
-    if (cooldowns.has(member.id) && cooldowns.get(member.id) > now) return;
+  if (cooldowns.has(member.id) && cooldowns.get(member.id) > now) return;
 
-    const existing = await getVCByOwner(member.id, guild.id);
-    if (existing) {
-      const ch = guild.channels.cache.get(existing.channel_id);
-      if (ch) return member.voice.setChannel(ch);
+  // ✅ CHECK EXISTING VC
+  const existing = await getVCByOwner(member.id, guild.id);
+
+  if (existing) {
+    const ch = guild.channels.cache.get(existing.channel_id);
+
+    if (ch) {
+      setTimeout(async () => {
+        try {
+          await member.voice.setChannel(ch);
+        } catch (err) {
+          console.error('Rejoin move failed:', err);
+        }
+      }, 500);
+
+      return; // 🚨 STOP HERE (no new VC)
     }
-
-    const channel = await guild.channels.create({
-      name: `${member.displayName}'s Room`,
-      type: ChannelType.GuildVoice,
-      parent: PRIVATE_VC_CATEGORY_ID || null,
-      permissionOverwrites: [
-        {
-          id: guild.id,
-          allow: [PermissionsBitField.Flags.ViewChannel],
-          deny: [PermissionsBitField.Flags.Connect],
-        },
-        {
-          id: member.id,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.Connect,
-            PermissionsBitField.Flags.Speak,
-            PermissionsBitField.Flags.Stream,
-          ],
-        },
-      ],
-    });
-
-    await saveVC(channel.id, member.id, guild.id);
-    cooldowns.set(member.id, now + VC_CREATE_COOLDOWN);
-
-    try {
-  await member.voice.setChannel(channel);
-} catch (err) {
-  console.error('Move failed:', err);
-}
   }
+
+  // ✅ CREATE NEW VC
+  const channel = await guild.channels.create({
+    name: `${member.displayName}'s Playground`,
+    type: ChannelType.GuildVoice,
+    parent: PRIVATE_VC_CATEGORY_ID || null,
+    permissionOverwrites: [
+      {
+        id: guild.id,
+        allow: [PermissionsBitField.Flags.ViewChannel],
+        deny: [PermissionsBitField.Flags.Connect],
+      },
+      {
+        id: member.id,
+        allow: [
+          PermissionsBitField.Flags.ViewChannel,
+          PermissionsBitField.Flags.Connect,
+          PermissionsBitField.Flags.Speak,
+          PermissionsBitField.Flags.Stream,
+        ],
+      },
+    ],
+  });
+
+  await saveVC(channel.id, member.id, guild.id);
+  cooldowns.set(member.id, now + VC_CREATE_COOLDOWN);
+
+  try {
+    await member.voice.setChannel(channel);
+  } catch (err) {
+    console.error('Move failed:', err);
+  }
+}
 
   async function deleteIfEmpty(channel) {
     const db = await getVCByChannel(channel.id);
