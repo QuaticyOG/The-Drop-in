@@ -320,7 +320,11 @@ new SlashCommandBuilder()
       { name: 'Days', value: 'days' }
     )
 )
-        .addStringOption(o => o.setName('image').setDescription('Image URL').setRequired(false)),
+        .addAttachmentOption(o =>
+  o.setName('image')
+    .setDescription('Upload an image')
+    .setRequired(false)
+)
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -419,15 +423,36 @@ if (i.isButton()) {
 
       const ch = guild.channels.cache.get(data.channel);
 
-      if (action === 'accept') {
-        await ch.permissionOverwrites.edit(data.requester, {
-          ViewChannel: true,
-          Connect: true,
-        });
+if (action === 'accept') {
+  await ch.permissionOverwrites.edit(data.requester, {
+    ViewChannel: true,
+    Connect: true,
+  });
 
-        requests.delete(id);
-        return i.update({ content: '✅ Accepted', components: [] });
-      }
+  const member = await guild.members.fetch(data.requester).catch(() => null);
+
+  if (member?.voice?.channel) {
+    // ✅ Already in VC → move them
+    try {
+      await member.voice.setChannel(ch);
+    } catch (err) {
+      console.error('Move failed:', err);
+    }
+
+    await i.update({ content: '✅ Accepted & moved!', components: [] });
+  } else {
+    // ❌ Not in VC → just notify
+    await i.update({
+      await i.update({
+        content: `✅ Accepted!\n🔓 <@${data.requester}> you can now join: <#${ch.id}>`,
+        components: [],
+      });
+      components: [],
+    });
+  }
+
+  requests.delete(id);
+}
 
       if (action === 'deny') {
         requests.delete(id);
@@ -604,7 +629,7 @@ let duration;
 if (unit === 'seconds') duration = time;
 if (unit === 'hours') duration = time * 60 * 60;
 if (unit === 'days') duration = time * 60 * 60 * 24;
-      const image = i.options.getString('image');
+      const image = i.options.getAttachment('image');
 
       const endTime = Date.now() + duration * 1000;
 
@@ -613,20 +638,26 @@ if (unit === 'days') duration = time * 60 * 60 * 24;
         .setTitle(`🎉 ${title}`)
         .setDescription(`${description}\n\n⏰ Ends <t:${Math.floor(endTime / 1000)}:R>`);
 
-      if (image) embed.setImage(image);
-
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`giveaway_join_${Date.now()}`)
-          .setLabel('Join Giveaway')
-          .setStyle(ButtonStyle.Danger)
-      );
+  new ButtonBuilder()
+    .setCustomId(`giveaway_join_${Date.now()}`)
+    .setLabel('Join Giveaway')
+    .setStyle(ButtonStyle.Danger)
+);
+      
+let files = [];
 
-      const msg = await i.reply({
-        embeds: [embed],
-        components: [row],
-        fetchReply: true,
-      });
+if (image) {
+  embed.setImage(`attachment://${image.name}`);
+  files.push(image);
+}
+
+const msg = await i.reply({
+  embeds: [embed],
+  components: [row],
+  files,
+  fetchReply: true,
+});
 
       await pool.query(
         'INSERT INTO giveaways (message_id, channel_id, guild_id, end_time) VALUES ($1,$2,$3,$4)',
@@ -651,7 +682,7 @@ giveawayTimeouts.set(msg.id, timeout);
     // INFO
     // ==============================
     if (i.commandName === 'postinfo') {
-      const embed = new EmbedBuilder()
+        const embed = new EmbedBuilder()
         .setTitle('🎧 Welcome to The Rubber Hose Club')
         .setDescription(
           'This server is the official community for **Quaticy** ⚡ and **Cauz** — built for chilling, gaming, and streaming together.\n\nWhether you’re here from stream or just vibing, you’re welcome 👀'
@@ -699,7 +730,7 @@ giveawayTimeouts.set(msg.id, timeout);
     // RULES
     // ==============================
     if (i.commandName === 'postrules') {
-      const embed = new EmbedBuilder()
+        const embed = new EmbedBuilder()
         .setTitle('📖 Server Rules & Guidelines')
         .setDescription(
           'Welcome to the **The Rubber Hose Club**!\nPlease follow these rules to keep the server safe, respectful, and enjoyable for everyone 🙌'
@@ -772,7 +803,7 @@ giveawayTimeouts.set(msg.id, timeout);
     // POST REACT
     // ==============================
     if (i.commandName === 'postreact') {
-      const embed = new EmbedBuilder()
+        const embed = new EmbedBuilder()
         .setTitle('🔔 Notifications')
         .setDescription(
           'Click the button below to **toggle notifications** for streams or giveaways.\n\nYou will get pinged when Quaticy or Cauz goes live. Or when we are hosting a giveaway.'
