@@ -266,7 +266,7 @@ require('dotenv').config();
       // ==============================
       if (i.commandName === 'postinfo') {
   const embed = new EmbedBuilder()
-    .setTitle('🎧 Welcome to Quaticy & Cauz Community')
+    .setTitle('🎧 Welcome to The Rubber Hose Club')
     .setDescription(
       'This server is the official community for **Quaticy** ⚡ and **Cauz** — built for chilling, gaming, and streaming together.\n\nWhether you’re here from stream or just vibing, you’re welcome 👀'
     )
@@ -320,7 +320,7 @@ require('dotenv').config();
   const embed = new EmbedBuilder()
     .setTitle('📖 Server Rules & Guidelines')
     .setDescription(
-      'Welcome to the **Quaticy & Cauz Community**!\nPlease follow these rules to keep the server safe, respectful, and enjoyable for everyone 🙌'
+      'Welcome to the **The Rubber Hose Club**!\nPlease follow these rules to keep the server safe, respectful, and enjoyable for everyone 🙌'
     )
     .addFields(
       {
