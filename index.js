@@ -275,7 +275,7 @@ require('dotenv').config();
             { name: '✅ Approval', value: 'Owner approves requests.' },
             { name: '🗑 Cleanup', value: 'VC deletes when empty.' }
           )
-          .setColor(#f70707);
+          .setColor('#f70707');
 
         return i.reply({ embeds: [embed] });
       }
@@ -292,7 +292,7 @@ require('dotenv').config();
             { name: '3. No spam', value: 'Don’t spam requests.' },
             { name: '4. Follow rules', value: 'Server rules apply.' }
           )
-          .setColor(#f70707);
+          .setColor('#f70707');
 
         return i.reply({ embeds: [embed] });
       }
