@@ -31,6 +31,7 @@ require('dotenv').config();
 
   let twitchToken = null;
   let liveCache = new Map();
+  const giveawayTimeouts = new Map();
 
   const client = new Client({
     intents: [
@@ -135,19 +136,24 @@ require('dotenv').config();
     }
   }
 
-  async function restoreGiveaways() {
-    const res = await pool.query('SELECT * FROM giveaways');
+async function restoreGiveaways() {
+  const res = await pool.query('SELECT * FROM giveaways');
 
-    for (const g of res.rows) {
-      const remaining = g.end_time - Date.now();
+  for (const g of res.rows) {
+    const remaining = g.end_time - Date.now();
 
-      if (remaining <= 0) {
+    if (remaining <= 0) {
+      endGiveaway(client, pool, g);
+    } else {
+      const timeout = setTimeout(() => {
         endGiveaway(client, pool, g);
-      } else {
-        setTimeout(() => endGiveaway(client, pool, g), remaining);
-      }
+        giveawayTimeouts.delete(g.message_id);
+      }, remaining);
+
+      giveawayTimeouts.set(g.message_id, timeout);
     }
   }
+}
 
   // =========================
   // TWITCH
@@ -259,6 +265,15 @@ require('dotenv').config();
           option.setName('user').setDescription('VC owner').setRequired(true)
         ),
 
+new SlashCommandBuilder()
+  .setName('endgiveaway')
+  .setDescription('End a giveaway early')
+  .addStringOption(o =>
+    o.setName('messageid')
+      .setDescription('Giveaway message ID')
+      .setRequired(true)
+  ),
+      
       new SlashCommandBuilder()
         .setName('postreact')
         .setDescription('Post notification role button'),
@@ -272,7 +287,21 @@ require('dotenv').config();
         .setDescription('Start a giveaway')
         .addStringOption(o => o.setName('title').setDescription('Title').setRequired(true))
         .addStringOption(o => o.setName('description').setDescription('Description').setRequired(true))
-        .addIntegerOption(o => o.setName('duration').setDescription('Seconds').setRequired(true))
+        .addIntegerOption(o =>
+  o.setName('time')
+    .setDescription('Time amount')
+    .setRequired(true)
+)
+.addStringOption(o =>
+  o.setName('unit')
+    .setDescription('Time unit')
+    .setRequired(true)
+    .addChoices(
+      { name: 'Seconds', value: 'seconds' },
+      { name: 'Hours', value: 'hours' },
+      { name: 'Days', value: 'days' }
+    )
+)
         .addStringOption(o => o.setName('image').setDescription('Image URL').setRequired(false)),
     ].map(cmd => cmd.toJSON());
 
@@ -421,6 +450,45 @@ if (i.isButton()) {
   if (i.isChatInputCommand()) {
 
     // ==============================
+// END GIVEAWAY
+// ==============================
+if (i.commandName === 'endgiveaway') {
+
+  const allowedRole = '1483822511987888243';
+
+  if (!i.member.roles.cache.has(allowedRole)) {
+    return i.reply({ content: '❌ No permission', ephemeral: true });
+  }
+
+  const messageId = i.options.getString('messageid');
+
+  const res = await pool.query(
+    'SELECT * FROM giveaways WHERE message_id = $1',
+    [messageId]
+  );
+
+  const giveaway = res.rows[0];
+
+  if (!giveaway) {
+    return i.reply({ content: '❌ Giveaway not found.', ephemeral: true });
+  }
+
+  // 🧠 CLEAR TIMER
+  const timeout = giveawayTimeouts.get(messageId);
+  if (timeout) {
+    clearTimeout(timeout);
+    giveawayTimeouts.delete(messageId);
+  }
+
+  await endGiveaway(client, pool, giveaway);
+
+  return i.reply({
+    content: '✅ Giveaway ended.',
+    ephemeral: true
+  });
+}
+    
+    // ==============================
     // GIVEAWAY
     // ==============================
     if (i.commandName === 'giveaway') {
@@ -433,7 +501,14 @@ if (i.isButton()) {
 
       const title = i.options.getString('title');
       const description = i.options.getString('description');
-      const duration = i.options.getInteger('duration');
+      const time = i.options.getInteger('time');
+const unit = i.options.getString('unit');
+
+let duration;
+
+if (unit === 'seconds') duration = time;
+if (unit === 'hours') duration = time * 60 * 60;
+if (unit === 'days') duration = time * 60 * 60 * 24;
       const image = i.options.getString('image');
 
       const endTime = Date.now() + duration * 1000;
@@ -463,12 +538,18 @@ if (i.isButton()) {
         [msg.id, msg.channel.id, msg.guild.id, endTime]
       );
 
-      setTimeout(() => endGiveaway(client, pool, {
-        message_id: msg.id,
-        channel_id: msg.channel.id,
-        guild_id: msg.guild.id,
-        end_time: endTime
-      }), duration * 1000);
+const timeout = setTimeout(() => {
+  endGiveaway(client, pool, {
+    message_id: msg.id,
+    channel_id: msg.channel.id,
+    guild_id: msg.guild.id,
+    end_time: endTime
+  });
+
+  giveawayTimeouts.delete(msg.id);
+}, duration * 1000);
+
+giveawayTimeouts.set(msg.id, timeout);
     }
 
     // ==============================
